@@ -1,51 +1,38 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:oidc/oidc.dart';
-import 'package:oidc_default_store/oidc_default_store.dart';
+import 'package:flutter_appauth/flutter_appauth.dart';
 
 /// Zitadel url + client id.
 /// you can replace String.fromEnvironment(*) calls with the actual values
 /// if you don't want to pass them dynamically.
-final zitadelIssuer = Uri.parse(const String.fromEnvironment('zitadel_url'));
+final zitadelIssuer = const String.fromEnvironment('zitadel_url');
 const zitadelClientId = String.fromEnvironment('zitadel_client_id');
 
 /// This should be the app's bundle id.
 const callbackUrlScheme = 'com.zitadel.zitadelflutter';
 
-/// This will be the current url of the page + /auth.html added to it.
-final baseUri = Uri.base;
-final webCallbackUrl = Uri.base.replace(path: 'auth.html');
+/// Platform-specific redirect URIs
+/// Mobile: Custom URL schemes work
+/// Web: Need actual HTTP URLs that browsers can navigate to
+final redirectUri = kIsWeb 
+    ? 'http://localhost:4444/auth.html' 
+    : '$callbackUrlScheme://oauth';
 
-/// for web platforms, we use http://website-url.com/auth.html
-///
-/// for mobile platforms, we use `com.zitadel.zitadelflutter:/`
-final redirectUri =
-    kIsWeb ? webCallbackUrl : Uri(scheme: callbackUrlScheme, path: '/');
+final postLogoutRedirectUri = kIsWeb 
+    ? 'http://localhost:4444/logout.html' 
+    : '$callbackUrlScheme://logout';
 
-final userManager = OidcUserManager.lazy(
-  discoveryDocumentUri: OidcUtils.getOpenIdConfigWellKnownUri(zitadelIssuer),
-  clientCredentials:
-      const OidcClientAuthentication.none(clientId: zitadelClientId),
-  store: OidcDefaultStore(),
-  settings: OidcUserManagerSettings(
-    redirectUri: redirectUri,
-    // the same redirectUri can be used as for post logout too.
-    postLogoutRedirectUri: redirectUri,
-    scope: ['openid', 'profile', 'email', 'offline_access'],
-  ),
-);
-late Future<void> initFuture;
+/// Create FlutterAppAuth instance
+final FlutterAppAuth appAuth = FlutterAppAuth();
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  initFuture = userManager.init();
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -53,26 +40,6 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
       ),
-      builder: (context, child) {
-        // Show a loading widget while the app is initializing.
-        // This can be used to show a splash screen for example.
-        return FutureBuilder(
-          future: initFuture,
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              return ErrorWidget(snapshot.error.toString());
-            }
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const Material(
-                child: Center(
-                  child: CircularProgressIndicator.adaptive(),
-                ),
-              );
-            }
-            return child!;
-          },
-        );
-      },
       home: const MyHomePage(title: 'Flutter ZITADEL Quickstart'),
     );
   }
@@ -90,42 +57,86 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   bool _busy = false;
   Object? latestError;
+  AuthorizationTokenResponse? _tokenResponse;
 
   /// Test if there is a logged in user.
-  bool get _authenticated => _currentUser != null;
+  bool get _authenticated => _tokenResponse != null;
 
   /// To get the access token.
-  String? get accessToken => _currentUser?.token.accessToken;
+  String? get accessToken => _tokenResponse?.accessToken;
 
   /// To get the id token.
-  String? get idToken => _currentUser?.idToken;
+  String? get idToken => _tokenResponse?.idToken;
 
-  /// To access the claims.
+  /// To access the claims (simplified - you would need to decode the JWT to get proper claims).
   String? get _username {
-    final currentUser = _currentUser;
-    if (currentUser == null) {
-      return null;
-    }
-    final claims = currentUser.aggregatedClaims;
-    return '${claims['given_name']} ${claims['family_name']}';
+    // In a real implementation, you would decode the JWT token to get claims
+    // For now, we'll just show that we're authenticated
+    return _authenticated ? 'User' : null;
   }
-
-  OidcUser? get _currentUser => userManager.currentUser;
 
   Future<void> _authenticate() async {
     setState(() {
       latestError = null;
       _busy = true;
     });
+    
     try {
-      final user = await userManager.loginAuthorizationCodeFlow();
-      if (user == null) {
-        //it wasn't possible to login the user.
-        return;
-      }
+      print('=== STARTING AUTHENTICATION ===');
+      print('Client ID: $zitadelClientId');
+      print('Issuer: $zitadelIssuer');
+      print('Redirect URI: $redirectUri');
+      
+      // Create the discovery URL
+      final discoveryUrl = '$zitadelIssuer/.well-known/openid-configuration';
+      
+      // Perform authorization and code exchange
+      final result = await appAuth.authorizeAndExchangeCode(
+        AuthorizationTokenRequest(
+          zitadelClientId,
+          redirectUri,
+          discoveryUrl: discoveryUrl,
+          scopes: ['openid', 'profile', 'email', 'offline_access'],
+          allowInsecureConnections: false,
+        ),
+      );
+      
+      setState(() {
+        _tokenResponse = result;
+      });
+      
+      print('Login successful!');
+      print('Access Token: ${result.accessToken}');
+      print('ID Token: ${result.idToken}');
+      print('Refresh Token: ${result.refreshToken}');
+      
+    } on FlutterAppAuthUserCancelledException {
+      print('User cancelled the authentication');
+      // Don't set this as an error since user cancellation is expected behavior
+      setState(() {
+        latestError = null;
+      });
+      // Show a brief message to acknowledge the cancellation
+      _showSnackBar('Login cancelled');
+    } on FlutterAppAuthPlatformException catch (e) {
+      print('=== AUTHENTICATION ERROR ===');
+      print('Error type: ${e.runtimeType}');
+      print('Error message: ${e.message}');
+      print('Error code: ${e.code}');
+      print('Error details: ${e.details}');
+      setState(() {
+        latestError = Exception('Authentication failed: ${e.message}');
+      });
     } catch (e) {
-      latestError = e;
+      print('=== AUTHENTICATION ERROR ===');
+      print('Error type: ${e.runtimeType}');
+      print('Error message: $e');
+      print('Error details: ${e.toString()}');
+      setState(() {
+        latestError = Exception('Authentication failed: ${e.toString()}');
+      });
     }
+    
     setState(() {
       _busy = false;
     });
@@ -136,11 +147,111 @@ class _MyHomePageState extends State<MyHomePage> {
       latestError = null;
       _busy = true;
     });
+    
     try {
-      await userManager.logout();
+      // Store current token response before clearing it
+      final currentTokenResponse = _tokenResponse;
+      
+      // Clear local state first
+      setState(() {
+        _tokenResponse = null;
+      });
+      
+      print('Local logout successful!');
+      
+      // Now try server-side logout if we have an ID token
+      if (currentTokenResponse?.idToken != null) {
+        try {
+          final discoveryUrl = '$zitadelIssuer/.well-known/openid-configuration';
+          await appAuth.endSession(
+            EndSessionRequest(
+              idTokenHint: currentTokenResponse!.idToken!,
+              postLogoutRedirectUrl: postLogoutRedirectUri,
+              discoveryUrl: discoveryUrl,
+              allowInsecureConnections: false,
+            ),
+          );
+          print('Server-side logout also completed');
+          _showSnackBar('Logged out successfully (server-side)');
+        } on FlutterAppAuthUserCancelledException {
+          print('User cancelled the server-side logout');
+          _showSnackBar('Logged out locally (server logout cancelled)');
+        } catch (serverLogoutError) {
+          print('Server-side logout failed (but local logout succeeded): $serverLogoutError');
+          _showSnackBar('Logged out locally (server logout failed)');
+        }
+      } else {
+        _showSnackBar('Logged out successfully');
+      }
+      
     } catch (e) {
-      latestError = e;
+      print('Logout error: $e');
+      setState(() {
+        latestError = Exception('Logout failed: ${e.toString()}');
+      });
     }
+    
+    setState(() {
+      _busy = false;
+    });
+  }
+
+  Future<void> _refreshToken() async {
+    if (_tokenResponse?.refreshToken == null) {
+      print('No refresh token available');
+      return;
+    }
+    
+    setState(() {
+      latestError = null;
+      _busy = true;
+    });
+    
+    try {
+      // Create the discovery URL
+      final discoveryUrl = '$zitadelIssuer/.well-known/openid-configuration';
+      
+      // Refresh the token
+      final result = await appAuth.token(
+        TokenRequest(
+          zitadelClientId,
+          redirectUri,
+          discoveryUrl: discoveryUrl,
+          refreshToken: _tokenResponse!.refreshToken!,
+          scopes: ['openid', 'profile', 'email', 'offline_access'],
+          allowInsecureConnections: false,
+        ),
+      );
+      
+      setState(() {
+        _tokenResponse = AuthorizationTokenResponse(
+          result.accessToken,
+          result.refreshToken,
+          result.accessTokenExpirationDateTime,
+          result.idToken,
+          result.tokenType,
+          null, // scopes not available in TokenResponse 
+          null, // authorizationAdditionalParameters not available in TokenResponse
+          result.tokenAdditionalParameters,
+        );
+      });
+      
+      print('Token refresh successful!');
+      print('New Access Token: ${result.accessToken}');
+      _showSnackBar('Token refreshed successfully');
+    } on FlutterAppAuthUserCancelledException {
+      print('User cancelled the token refresh');
+      setState(() {
+        latestError = null;
+      });
+      _showSnackBar('Token refresh cancelled');
+    } catch (e) {
+      print('Token refresh error: $e');
+      setState(() {
+        latestError = Exception('Token refresh failed: ${e.toString()}');
+      });
+    }
+    
     setState(() {
       _busy = false;
     });
@@ -157,13 +268,45 @@ class _MyHomePageState extends State<MyHomePage> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             if (latestError != null)
-              ErrorWidget(latestError!)
+              Container(
+                margin: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Icon(Icons.error, color: Colors.red),
+                        IconButton(
+                          icon: const Icon(Icons.close, color: Colors.red),
+                          onPressed: () {
+                            setState(() {
+                              latestError = null;
+                            });
+                          },
+                          tooltip: 'Dismiss error',
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Error: ${latestError.toString()}',
+                      style: const TextStyle(color: Colors.red),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              )
             else ...[
               if (_busy)
                 const Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text("Busy, logging in."),
+                    Text("Processing request..."),
                     Padding(
                       padding: EdgeInsets.all(16.0),
                       child: CircularProgressIndicator(),
@@ -172,32 +315,128 @@ class _MyHomePageState extends State<MyHomePage> {
                 )
               else ...[
                 if (_authenticated) ...[
+                  const Icon(
+                    Icons.check_circle,
+                    color: Colors.green,
+                    size: 64,
+                  ),
+                  const SizedBox(height: 16),
                   Text(
                     'Hello $_username!',
+                    style: Theme.of(context).textTheme.headlineSmall,
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16.0),
-                    child: ElevatedButton(
-                      onPressed: _logout,
-                      child: const Text('Logout'),
+                  const SizedBox(height: 8),
+                  const Text('You are successfully authenticated.'),
+                  const SizedBox(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Refresh Token'),
+                        onPressed: _refreshToken,
+                      ),
+                      const SizedBox(width: 16),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.logout),
+                        label: const Text('Logout'),
+                        onPressed: _logout,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_tokenResponse != null) ...[
+                    const SizedBox(height: 24),
+                    ExpansionTile(
+                      title: const Text('Token Information'),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildTokenInfo('Access Token', _tokenResponse!.accessToken),
+                              _buildTokenInfo('ID Token', _tokenResponse!.idToken),
+                              _buildTokenInfo('Refresh Token', _tokenResponse!.refreshToken),
+                              if (_tokenResponse!.accessTokenExpirationDateTime != null)
+                                _buildTokenInfo('Expires At', _tokenResponse!.accessTokenExpirationDateTime.toString()),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
+                  ],
                 ] else ...[
+                  const Icon(
+                    Icons.lock_outline,
+                    size: 64,
+                    color: Colors.grey,
+                  ),
+                  const SizedBox(height: 16),
                   const Text(
                     'You are not authenticated.',
+                    style: TextStyle(fontSize: 18),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 16.0),
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.fingerprint),
-                      label: const Text('Login'),
-                      onPressed: _authenticate,
+                  const SizedBox(height: 24),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.fingerprint),
+                    label: const Text('Login'),
+                    onPressed: _authenticate,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                     ),
                   ),
                 ],
               ],
             ],
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTokenInfo(String label, String? value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 4),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              value ?? 'N/A',
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: 'OK',
+          onPressed: () {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          },
         ),
       ),
     );

@@ -53,7 +53,7 @@ then add your redirect uri in ZITADEL console. It should look like this `https:/
 1. Copy your instance url and your `clientId` and set it in `lib/main.dart` to the `zitadelIssuer` and `zitadelClientId` variables.
 
 
-2. Search for every instance of `com.example.zitadelflutter` in the code and replace it with your app identifier (note that having underscore `_` in the callback schema is disallowed).
+2. Search for every instance of `com.zitadel.zitadelflutter` in the code and replace it with your app identifier (note that having underscore `_` in the callback schema is disallowed).
 
     This exists in the following locations:
     - android/app/build.gradle

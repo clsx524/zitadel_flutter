@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Authentication Complete - ZITADEL Flutter</title>
+    <title>Logout Complete - ZITADEL Flutter</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -44,9 +44,9 @@
 </head>
 <body>
     <div class="container">
-        <div class="icon">🔐</div>
-        <h1>Authentication Complete</h1>
-        <p>You have been successfully authenticated.</p>
+        <div class="icon">✅</div>
+        <h1>Logout Complete</h1>
+        <p>You have been successfully logged out.</p>
         <p>You can now close this window.</p>
         <div class="redirect-info">
             Redirecting back to the app...
@@ -54,15 +54,10 @@
     </div>
 
     <script>
-        // This page handles the OAuth callback for web platforms
-        console.log('Authentication redirect completed');
-        console.log('Current URL:', window.location.href);
-        
-        // The flutter_appauth library will handle parsing the callback URL
-        // and extracting the authorization code or tokens
-        
         // For web apps, we can optionally redirect back to the main app or close the window
         // This depends on how your web app is structured
+        
+        console.log('Post-logout redirect completed');
         
         // Option 1: Redirect back to the main app (uncomment if needed)
         // setTimeout(() => {
@@ -78,7 +73,7 @@
         //     }
         // }, 2000);
         
-        // For now, just show the authentication complete message
+        // For now, just show the logout complete message
         // The flutter_appauth library will handle returning to the app
     </script>
 </body>
